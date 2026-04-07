@@ -11,15 +11,21 @@ import {
   subMonths
 } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { Settings, ChevronLeft, ChevronRight, Gift, X } from 'lucide-react';
+import { Settings, ChevronLeft, ChevronRight, Gift, X, BarChart2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
+import { ShiftTimer } from './components/ShiftTimer';
+import { Statistics } from './components/Statistics';
 
 const DAILY_RATE = 2500;
 const CRITICAL_THRESHOLD = 40000;
 
 type RecordStatus = 'green' | 'red';
-type Records = Record<string, RecordStatus>;
+type RecordData = {
+  status: RecordStatus;
+  earnings?: number;
+};
+type Records = Record<string, RecordData | RecordStatus>;
 
 export default function App() {
   // Database: Records
@@ -45,6 +51,17 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   
   const [showSettings, setShowSettings] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+  const [isTimerVisible, setIsTimerVisible] = useState(() => {
+    const savedState = localStorage.getItem('4hours_shift_state');
+    if (savedState) return true;
+    
+    const savedRecords = localStorage.getItem('4hours_records');
+    const parsed = savedRecords ? JSON.parse(savedRecords) : {};
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    return !parsed[todayStr];
+  });
+
   const [wheelState, setWheelState] = useState<'hidden' | 'ready' | 'spinning' | 'revealing'>('hidden');
   const [wonPrize, setWonPrize] = useState<string | null>(null);
   const [spinDegrees, setSpinDegrees] = useState(0);
@@ -75,9 +92,12 @@ export default function App() {
     let redCount = 0;
     
     days.forEach(day => {
-      const status = records[format(day, 'yyyy-MM-dd')];
-      if (status) filledCount++;
-      if (status === 'red') redCount++;
+      const record = records[format(day, 'yyyy-MM-dd')];
+      if (record) {
+        filledCount++;
+        const status = typeof record === 'string' ? record : record.status;
+        if (status === 'red') redCount++;
+      }
     });
 
     if (filledCount === days.length && redCount === 0) {
@@ -91,8 +111,17 @@ export default function App() {
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
     setRecords(prev => ({
       ...prev,
-      [dateStr]: status
+      [dateStr]: { status, earnings: status === 'green' ? DAILY_RATE : 0 }
     }));
+  };
+
+  const handleShiftComplete = (amount: number) => {
+    const dateStr = format(new Date(), 'yyyy-MM-dd');
+    setRecords(prev => ({
+      ...prev,
+      [dateStr]: { status: 'green', earnings: amount }
+    }));
+    setIsTimerVisible(false);
   };
 
   const spinWheel = () => {
@@ -124,20 +153,42 @@ export default function App() {
   // Calculate stats for the viewed month
   let greenDays = 0;
   let redDays = 0;
+  let currentEarnings = 0;
 
   days.forEach(day => {
     const dateStr = format(day, 'yyyy-MM-dd');
-    if (records[dateStr] === 'green') greenDays++;
-    if (records[dateStr] === 'red') redDays++;
+    const record = records[dateStr];
+    if (record) {
+      const status = typeof record === 'string' ? record : record.status;
+      const earnings = typeof record === 'object' && record.earnings !== undefined ? record.earnings : (status === 'green' ? DAILY_RATE : 0);
+      
+      if (status === 'green') {
+        greenDays++;
+        currentEarnings += earnings;
+      }
+      if (status === 'red') redDays++;
+    }
   });
 
-  const currentEarnings = greenDays * DAILY_RATE;
   const potentialMax = (daysInMonth - redDays) * DAILY_RATE;
   const isCritical = potentialMax < CRITICAL_THRESHOLD;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans selection:bg-zinc-800 flex flex-col max-w-md mx-auto relative overflow-hidden">
       
+      {isTimerVisible && (
+        <ShiftTimer 
+          onComplete={handleShiftComplete} 
+          onCancel={() => setIsTimerVisible(false)} 
+        />
+      )}
+
+      <AnimatePresence>
+        {showStats && (
+          <Statistics records={records} onClose={() => setShowStats(false)} />
+        )}
+      </AnimatePresence>
+
       {/* Settings Modal */}
       <AnimatePresence>
         {showSettings && (
@@ -284,7 +335,9 @@ export default function App() {
               <ChevronRight size={24} />
             </button>
           </div>
-          <div className="w-10" /> {/* Spacer for centering */}
+          <button onClick={() => setShowStats(true)} className="text-zinc-500 hover:text-zinc-300 transition-colors p-2 -mr-2">
+            <BarChart2 size={22} />
+          </button>
         </div>
 
         <div className="flex justify-between items-end mb-2">
@@ -336,7 +389,8 @@ export default function App() {
           
           {days.map(day => {
             const dateStr = format(day, 'yyyy-MM-dd');
-            const status = records[dateStr];
+            const record = records[dateStr];
+            const status = record ? (typeof record === 'string' ? record : record.status) : null;
             const isSelected = isSameDay(day, selectedDate);
             const isCurrentDay = isToday(day);
             
@@ -387,3 +441,4 @@ export default function App() {
     </div>
   );
 }
+
